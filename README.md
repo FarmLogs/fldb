@@ -8,7 +8,7 @@ Usage:
 from fldb import FLDB
 
 url = 'postgres://user:password@host/database'
-conn = FLDB.from_url(db_url)
+conn = FLDB.from_url(url)
 ```
 
 Or, if you use environment variables for your database strings,
@@ -34,4 +34,12 @@ with conn.cursor(commit_on_close=True) as c:
 
 ```
 
-Feel free to take a look at [tests.py](tests.py) to see this in action.
+### Testing
+
+Feel free to take a look at [tests.py](tests.py) to see some of this library in action.
+
+The test suite was developed using [Docker Compose](https://docs.docker.com/compose/) to ensure that a fresh database is created and linked automagically on each run.
+
+Running tests (in an isolated container) is as easy as:
+
+    docker-compose run tests
