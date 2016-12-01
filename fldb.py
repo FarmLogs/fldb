@@ -118,7 +118,7 @@ class DatabasePool:
                 test_cur.execute("SELECT 42;")
                 test_cur.close()
                 break
-            except psycopg2.DatabaseError, psycopg2.OperationalError:
+            except (psycopg2.DatabaseError, psycopg2.OperationalError):
                 pass
         else:
             raise RuntimeError('Could not get a connection to: {}'.format(self.name))
