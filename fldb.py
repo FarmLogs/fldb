@@ -3,8 +3,9 @@ import logging
 from contextlib import contextmanager
 
 import psycopg2
-from psycopg2 import pool
+
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool, PoolError
 
 MAX_CONNECTION_ATTEMPTS = 10
 
@@ -13,7 +14,7 @@ class EnvironmentVariableNotFoundException(Exception):
     pass
 
 
-class FLDB:
+class FLDB(object):
     """
     Provides convenience methods around creating DatabasePool objects, and
     attempts to cache those connections when possible.
@@ -80,7 +81,7 @@ class FLDB:
         return new_conn
 
 
-class DatabasePool:
+class DatabasePool(object):
     """
     Creates and manages a pool of connections to a database.
 
@@ -93,16 +94,41 @@ class DatabasePool:
     - cursor_factory defines the factory used for inflating database rows
 
     """
-    def __init__(self, connection_url, name=None, mincount=2, maxcount=40, cursor_factory=RealDictCursor, **kwargs):
+    MINIMUM_CONNECTION_COUNT = 2
+    MAXIMUM_CONNECTION_COUNT = 40
+    DEFAULT_CURSOR_FACTORY = RealDictCursor
+
+    def __init__(self, connection_url, name=None, mincount=None, maxcount=None, cursor_factory=None, **kwargs):
         self.connection_url = connection_url
         self.name = name or connection_url
-        self._pool = pool.ThreadedConnectionPool(mincount, maxcount, connection_url, cursor_factory=cursor_factory)
+
+        self.mincount = mincount
+        self.maxcount = maxcount
+        self.cursor_factory = cursor_factory
 
     def __repr__(self):
         return "<%s: %s>" % (self.__class__.__name__, self.name)
 
     def __del__(self):
-        self._pool.closeall()
+        if hasattr(self, '_pool'):
+            self._pool.closeall()
+
+    def make_pool(self):
+        return ThreadedConnectionPool(self.mincount or self.MINIMUM_CONNECTION_COUNT,
+                                      self.maxcount or self.MAXIMUM_CONNECTION_COUNT,
+                                      self.connection_url,
+                                      cursor_factory=self.cursor_factory or self.DEFAULT_CURSOR_FACTORY)
+
+    @property
+    def pool(self):
+        """
+        Lazy pool creation.
+
+        """
+        pool = getattr(self, '_pool', None)
+        if not pool:
+            self._pool = pool = self.make_pool()
+        return pool
 
     @contextmanager
     def cursor(self, commit_on_close=False):
@@ -110,25 +136,30 @@ class DatabasePool:
         Fetches a cursor from the database connection pool.
         We run a dummy query because we have experienced stale connections that fail
         to correctly report that their connection has closed, and cause OperationalErrors.
+
         """
         for _ in range(MAX_CONNECTION_ATTEMPTS):
             try:
-                con = self._pool.getconn()
+                con = self.pool.getconn()
                 test_cur = con.cursor()
-                test_cur.execute("SELECT 42;")
+                test_cur.execute("SELECT 42 as fldb_test_query;")
                 test_cur.close()
                 break
+
             except (psycopg2.DatabaseError, psycopg2.OperationalError):
                 pass
+
         else:
-            raise RuntimeError('Could not get a connection to: {}'.format(self.name))
+            raise RuntimeError('Could not get a connection to: %s' % self.name)
 
         try:
             yield con.cursor()
             if commit_on_close:
                 con.commit()
-        except pool.PoolError as e:
+
+        except PoolError as e:
             logging.log(logging.ERROR, e.message)
+
         finally:
             try:
                 self._pool.putconn(con)
