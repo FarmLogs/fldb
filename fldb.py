@@ -7,8 +7,6 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool, PoolError
 
-MAX_CONNECTION_ATTEMPTS = 10
-
 
 class EnvironmentVariableNotFoundException(Exception):
     pass
@@ -94,6 +92,7 @@ class DatabasePool(object):
     - cursor_factory defines the factory used for inflating database rows
 
     """
+    MAX_CONNECTION_ATTEMPTS = 10
     MINIMUM_CONNECTION_COUNT = 2
     MAXIMUM_CONNECTION_COUNT = 40
     DEFAULT_CURSOR_FACTORY = RealDictCursor
@@ -130,21 +129,14 @@ class DatabasePool(object):
             self._pool = pool = self.make_pool()
         return pool
 
-    @contextmanager
-    def cursor(self, *args, **kwargs):
-        """
-        Fetches a cursor from the database connection pool.
-        We run a dummy query because we have experienced stale connections that fail
-        to correctly report that their connection has closed, and cause OperationalErrors.
-
-        """
-        for _ in range(MAX_CONNECTION_ATTEMPTS):
+    def ensure_connection(self):
+        for _ in range(self.MAX_CONNECTION_ATTEMPTS):
             try:
                 con = self.pool.getconn()
                 test_cur = con.cursor()
                 test_cur.execute("SELECT 42 as fldb_test_query;")
                 test_cur.close()
-                break
+                return con
 
             except (psycopg2.DatabaseError, psycopg2.OperationalError):
                 pass
@@ -152,17 +144,28 @@ class DatabasePool(object):
         else:
             raise RuntimeError('Could not get a connection to: %s' % self.name)
 
-        try:
-            # Legacy
-            kwargs.pop('commit_on_close')
+    @contextmanager
+    def connection(self):
+        conn = self.ensure_connection()
 
-            yield con.cursor(*args, **kwargs)
+        try:
+            yield conn
 
         except PoolError as e:
             logging.log(logging.ERROR, e.message)
 
         finally:
             try:
-                self._pool.putconn(con)
+                self._pool.putconn(conn)
             except:
                 pass
+
+    @contextmanager
+    def cursor(self, *args, **kwargs):
+        with self.connection() as conn:
+            commit_on_close = kwargs.pop('commit_on_close', False)
+
+            yield conn.cursor(*args, **kwargs)
+
+            if commit_on_close:
+                conn.commit()
