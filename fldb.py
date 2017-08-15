@@ -131,7 +131,7 @@ class DatabasePool(object):
         return pool
 
     @contextmanager
-    def cursor(self, commit_on_close=False):
+    def cursor(self, *args, **kwargs):
         """
         Fetches a cursor from the database connection pool.
         We run a dummy query because we have experienced stale connections that fail
@@ -153,9 +153,10 @@ class DatabasePool(object):
             raise RuntimeError('Could not get a connection to: %s' % self.name)
 
         try:
-            yield con.cursor()
-            if commit_on_close:
-                con.commit()
+            # Legacy
+            kwargs.pop('commit_on_close')
+
+            yield con.cursor(*args, **kwargs)
 
         except PoolError as e:
             logging.log(logging.ERROR, e.message)
