@@ -1,13 +1,17 @@
 import os
 import unittest
-import pprint
 
 from fldb import FLDB
+
 
 class TestBasicCases(unittest.TestCase):
   def setUp(self):
     self.conn = FLDB.from_name('TEST_DATABASE_URL')
     self.people = ['Ashley', 'Frank', 'Mason']
+
+  def test_teardown_works(self):
+    x = FLDB.from_url('invalid://url')
+    del x
 
   def test_same_db(self):
     """
