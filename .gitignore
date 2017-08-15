@@ -1,3 +1,4 @@
+*.egg-info
 bin
 site-packages
 *.pyc
